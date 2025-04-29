@@ -32,17 +32,17 @@ const int resolution = 8;   // Résolution (8 bits : valeurs de 0 à 255)
 hd44780_I2Cexp lcd(0x27);
 DHT dht(DHT_PIN, DHTTYPE);
 
+// Variables globales
 int encoder_value = 0;
-
 int last_encodeur_value = 0;
 int last_capteur_value = 0;
-int btn_flag = 0;
 float poidsKg = 0;
 int previousButtonState = HIGH; // bouton non appuyé initialement
 int flag_confirm = 0; // flag pour activer le traitement après confirmation depuis LabVIEW
+bool affichageMesures = false;
+unsigned long confirmationTime = 0;
 
-//========================================================================================================================//
-// Code pour simuler le capteur de pression, encodeur rotatif qu'on fait tourner
+// Encodeur rotatif pour simuler la pression
 #define ROTARY_ENCODER_A_PIN 32
 #define ROTARY_ENCODER_B_PIN 33
 #define ROTARY_ENCODER_BUTTON_PIN 35
@@ -61,42 +61,37 @@ void rotary_onButtonClick() {
     return;
   }
   lastTimePressed = millis();
-  
   delay(100);
 }
 
 void rotary_loop() {
   if (rotaryEncoder.encoderChanged()) {
     int value = rotaryEncoder.readEncoder();
-    
     if (value != lastValue) {
       lastValue = value;
-      encoder_value = value; // ← Mise à jour de la variable globale
+      encoder_value = value; // Mise à jour de la variable globale
     }
   }
-  
   if (rotaryEncoder.isEncoderButtonClicked()) {
     rotary_onButtonClick();
   }
 }
 
-
 void IRAM_ATTR readEncoderISR() {
   rotaryEncoder.readEncoder_ISR();
 }
-//========================================================================================================================//
 
 void setup() {
   Serial.begin(115200);
   Wire.begin();
   lcd.begin(16, 2);       // écran 16 colonnes x 2 lignes
   lcd.setBacklight(255);  // mettre le rétroéclairage au maximum
-  
+
   // Configuration des broches
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_RED_PIN, OUTPUT);
   pinMode(LED_GREEN_PIN, OUTPUT);
-  
+
   // Initialisation des canaux PWM pour chaque couleur
   ledcSetup(redChannel, freq, resolution);
   ledcSetup(greenChannel, freq, resolution);
@@ -107,33 +102,22 @@ void setup() {
   ledcAttachPin(GREEN_PIN, greenChannel);
   ledcAttachPin(BLUE_PIN, blueChannel);
 
-
-  
-  lcd.setCursor(0, 0);
-  lcd.print("T:      C Kg:     ");
-  lcd.setCursor(0, 1);
-  lcd.print("H:      % ADC:    ");
-
-
   dht.begin();
 
-  // digitalWrite(LED_GREEN_PIN, LOW);
-  // digitalWrite(LED_RED_PIN, HIGH);
-
-    // LED RGB blanche au démarrage
+  // LED RGB blanche au démarrage
   ledcWrite(redChannel, 30);
   ledcWrite(greenChannel, 30);
   ledcWrite(blueChannel, 30);
 
+  rotaryEncoder.begin();
+  rotaryEncoder.setup(readEncoderISR);
+  bool circleValues = false;
+  rotaryEncoder.setBoundaries(0, 4095, circleValues);
+  rotaryEncoder.setAcceleration(300);
 
-//========================================================================================================================//
-//Encodeur rotatif simulation
-rotaryEncoder.begin();
-rotaryEncoder.setup(readEncoderISR);
-bool circleValues = false;
-rotaryEncoder.setBoundaries(0, 4095, circleValues);
-rotaryEncoder.setAcceleration(300);
-//========================================================================================================================//
+  // LED rouge allumée au départ
+  digitalWrite(LED_RED_PIN, HIGH);
+  digitalWrite(LED_GREEN_PIN, LOW);
 }
 
 void loop() {
@@ -152,69 +136,28 @@ void loop() {
   }
 
   if (Serial.available()) {
-    String message = Serial.readStringUntil(';'); // lit le message jusqu'à ";"
-  
+    String message = Serial.readStringUntil(';');
     if (message == "confirmation") {
-      Serial.println("Message de confirmation acquit");
-      flag_confirm = 1; // active le traitement
-      btn_flag = 0;  // réinitialise le bouton
-    }
-  
-    if (message == "termine") {
-      Serial.println("Fin de transmission");
-      flag_confirm = 0; // désactive le traitement
-      btn_flag = 0;  // empêche tout envoi de données
-      // Revenir à une couleur blanche ou éteindre la LED
-      ledcWrite(redChannel, 255);
-      ledcWrite(greenChannel, 255);
-      ledcWrite(blueChannel, 255);
+      Serial.println("Message de confirmation reçu");
+      flag_confirm = 1;
+      confirmationTime = millis();
+      affichageMesures = false;
+      // LED verte allumée
+      digitalWrite(LED_RED_PIN, LOW);
+      digitalWrite(LED_GREEN_PIN, HIGH);
     }
   }
-  
 
-  // gestion du bouton physique uniquement si LabVIEW a envoyé "confirmation"
-  if (flag_confirm == 1) {
-    int currentButtonState = digitalRead(BUTTON_PIN);
-    if (previousButtonState == HIGH && currentButtonState == LOW) {
-      btn_flag = !btn_flag; // bascule de 0 à 1 ou 1 à 0
-    }
-    previousButtonState = currentButtonState;
+  // gestion du bouton pour stopper l'envoi
+  int currentButtonState = digitalRead(BUTTON_PIN);
+  if (previousButtonState == HIGH && currentButtonState == LOW && flag_confirm == 1 && affichageMesures) {
+    Serial.println("Fin de l'envoi par bouton");
+    flag_confirm = -1;
+    // LED rouge allumée, verte éteinte
+    digitalWrite(LED_GREEN_PIN, LOW);
+    digitalWrite(LED_RED_PIN, HIGH);
   }
-
-  // // Hystérésis du capteur de pression
-  // if (!(pressureValue >= last_capteur_value - 5 && pressureValue <= last_capteur_value + 5)) {
-  //   last_capteur_value = pressureValue;
-  // }
-
-  // // Conversion ADC -> Kilogrammes
-  // if (pressureValue >= 11) {
-  //   poidsKg = 0.4028 * pressureValue + 17.57;
-  // } else {
-  //   poidsKg = 0;
-  // }
-
-  // // LED RGB en fonction du niveau de pression
-  // if (pressureValue <= 819) {
-  //   ledcWrite(redChannel, 0); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
-  // } else if (pressureValue <= 1638) {
-  //   ledcWrite(redChannel, 127); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
-  // } else if (pressureValue <= 2457) {
-  //   ledcWrite(redChannel, 255); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
-  // } else if (pressureValue <= 3276) {
-  //   ledcWrite(redChannel, 255); ledcWrite(greenChannel, 128); ledcWrite(blueChannel, 0);
-  // } else if (pressureValue <= 3956) {
-  //   ledcWrite(redChannel, 255); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 0);
-  // } else if (pressureValue <= 4000) {
-  //   ledcWrite(redChannel, 0); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 255);
-  // } else if (pressureValue > 4000) {
-  //   ledcWrite(redChannel, 200); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 200);
-  // }
-
-//========================================================================================================================//
-  // Hystérésis du capteur de pression
-  if (!(encoder_value >= last_encodeur_value - 5 && pressureValue <= last_encodeur_value + 5)) {
-    last_encodeur_value = pressureValue;
-  }
+  previousButtonState = currentButtonState;
 
   // Conversion ADC -> Kilogrammes
   if (encoder_value >= 11) {
@@ -223,86 +166,66 @@ void loop() {
     poidsKg = 0;
   }
 
-  // LED RGB en fonction du niveau de pression
-  if (flag_confirm == 1) {
+    // Mise à jour de la LED RGB selon la valeur de pression (encoder_value)
+    if (flag_confirm == 1) {
     if (encoder_value <= 819) {
-      ledcWrite(redChannel, 0); ledcWrite(greenChannel, 200); ledcWrite(blueChannel, 0);
+      ledcWrite(redChannel, 0); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0); // Vert
     } else if (encoder_value <= 1638) {
-      ledcWrite(redChannel, 100); ledcWrite(greenChannel, 200); ledcWrite(blueChannel, 0);
+      ledcWrite(redChannel, 127); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0); // Jaune clair
     } else if (encoder_value <= 2457) {
-      ledcWrite(redChannel, 200); ledcWrite(greenChannel, 200); ledcWrite(blueChannel, 0);
+      ledcWrite(redChannel, 255); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0); // Jaune
     } else if (encoder_value <= 3276) {
-      ledcWrite(redChannel, 200); ledcWrite(greenChannel, 100); ledcWrite(blueChannel, 0);
+      ledcWrite(redChannel, 255); ledcWrite(greenChannel, 128); ledcWrite(blueChannel, 0); // Orange
     } else if (encoder_value <= 3956) {
-      ledcWrite(redChannel, 200); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 0);
+      ledcWrite(redChannel, 255); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 0); // Rouge
     } else if (encoder_value <= 4000) {
-      ledcWrite(redChannel, 0); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 200);
+      ledcWrite(redChannel, 0); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 255); // Bleu
     } else if (encoder_value > 4000) {
-      ledcWrite(redChannel, 150); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 150);
+      ledcWrite(redChannel, 200); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 200); // Violet
     }
   }
-  
-//========================================================================================================================//
 
-    // Mise à jour des LED d'état ON/OFF
-  if (flag_confirm == 1) {
-    if (btn_flag == 1) {
-      digitalWrite(LED_GREEN_PIN, HIGH);
-      digitalWrite(LED_RED_PIN, LOW);
-    } else {
-      digitalWrite(LED_GREEN_PIN, LOW);
-      digitalWrite(LED_RED_PIN, HIGH);
-    }
-  } else {
-    // Si on n'est pas en mode actif, toute les leds s'éteint
-    digitalWrite(LED_GREEN_PIN, LOW);
-    digitalWrite(LED_RED_PIN, LOW);
-  }
 
-  // Affichage LCD dynamique
+  // Affichage OLED
+  lcd.clear();
   if (flag_confirm == 0) {
-    lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("En attente de");
     lcd.setCursor(0, 1);
     lcd.print("confirmation...");
   }
-  else if (flag_confirm == 1 && btn_flag == 0) {
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print("T:"); lcd.print(temperature, 1);
-    lcd.print("C H:"); lcd.print(humidity, 1); lcd.print("%");
+  else if (flag_confirm == 1) {
+    if (!affichageMesures) {
+      lcd.setCursor(0, 0);
+      lcd.print("Envoi des donnees");
+      lcd.setCursor(0, 1);
+      lcd.print("vers LabVIEW...");
+      if (millis() - confirmationTime >= 2000) {
+        affichageMesures = true;
+      }
+    } else {
+      lcd.setCursor(0, 0);
+      lcd.print("T:"); lcd.print(temperature, 1);
+      lcd.print("C H:"); lcd.print(humidity, 1); lcd.print("%");
+      lcd.setCursor(0, 1);
+      lcd.print("Kg:"); lcd.print(poidsKg, 1);
+      lcd.print("ADC:"); lcd.print(encoder_value);
 
-    lcd.setCursor(0, 1);
-    lcd.print("Kg:"); lcd.print(poidsKg, 1);
-    lcd.print(" ADC:"); lcd.print(encoder_value);
+      // Envoi des données
+      Serial.print(temperature);
+      Serial.print(";");
+      Serial.print(humidity);
+      Serial.print(";");
+      Serial.print(poidsKg);
+      Serial.print(";");
+    }
   }
-  else if (flag_confirm == 1 && btn_flag == 1) {
-    lcd.clear();
+  else if (flag_confirm == -1) {
     lcd.setCursor(0, 0);
-    lcd.print(">> Envoi des");
-    lcd.setCursor(0, 1);
-    lcd.print(">> donnees...");
-  }
-  else if (flag_confirm == -1) {  // signal de "termine"
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(">> FIN <<");
+    lcd.print("Fin de l'envoi");
     lcd.setCursor(0, 1);
     lcd.print("                ");
   }
 
-  
-
-  // Envoi des données si le flag est activé
-  if (btn_flag == 1) {
-    Serial.print(temperature);
-    Serial.print(";");
-    Serial.print(humidity);
-    Serial.print(";");
-    Serial.print(poidsKg);
-    Serial.print(";");
-  }
-
-  delay(500); // pour lisibilité
+  delay(500); // Pour lisibilité
 }
