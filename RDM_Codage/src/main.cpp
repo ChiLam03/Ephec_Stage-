@@ -56,13 +56,6 @@ void setup() {
   strip.show();              // Éteint toutes les LEDs
   strip.setBrightness(50);   // Ajuste la luminosité (0 à 255)
 
-    // Affichage initial : attente de l'appui bouton
-    lcd.clear();
-    lcd.setCursor(0, 0);
-    lcd.print(" Wait press BTN ");
-    lcd.setCursor(0, 1);
-    lcd.print("BTN--> Send DATA");
-
   // Configuration des broches
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   pinMode(LED_RED_PIN, OUTPUT);
@@ -90,28 +83,11 @@ void setup() {
   digitalWrite(LED_GREEN_PIN, LOW);
 }
 
-void rainbowCycle(uint8_t wait) {
-  static uint16_t j = 0;
-  for (int i = 0; i < strip.numPixels(); i++) {
-    strip.setPixelColor(i, strip.ColorHSV((i * 65536L / strip.numPixels() + j) % 65536));
-  }
-  strip.show();
-  j += 256;
-  delay(wait);
-}
-
-
 void loop() {
-
   // Lecture capteurs
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
-  int pressureValue = 3000; //analogRead(PRESSURE_PIN);  // Reviens au capteur réel si branché
-
-  // Hystérésis pour le capteur de pression
-  if (!(pressureValue >= last_capteur_value - 5 && pressureValue <= last_capteur_value + 5)) {
-    last_capteur_value = pressureValue;
-  }
+  last_capteur_value = analogRead(PRESSURE_PIN);
 
   // Vérifie le capteur DHT22
   if (isnan(temperature) || isnan(humidity)) {
@@ -120,50 +96,27 @@ void loop() {
     return;
   }
 
-  // Gestion bouton physique : toggle d’un état
-  int currentButtonState = digitalRead(BUTTON_PIN);
-  static bool envoiActif = false;
-  
-  if (previousButtonState == HIGH && currentButtonState == LOW) {
-    envoiActif = !envoiActif; // inverse l’état
-  
-    if (envoiActif) {
-      Serial.println("Send data/");
-      digitalWrite(LED_GREEN_PIN, HIGH);
+  // Lecture série
+  if (Serial.available()) {
+    String message = Serial.readStringUntil('\n');
+    message.trim();  // Enlève espaces ou retour chariot inutiles
+
+    // Si le message contient une virgule
+    if (message.indexOf(',') != -1) {
+      Serial.print(temperature);
+      Serial.print(";");
+      Serial.print(humidity);
+      Serial.print(";");
+      Serial.print(last_capteur_value);
+      Serial.print(";");
+      Serial.print(message);
+      Serial.println(";");
       digitalWrite(LED_RED_PIN, LOW);
-  
-      // Affichage début de l’envoi
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print(">> Send Data <<");
-      lcd.setCursor(0, 1);
-      lcd.print("Vers LabVIEW...");
-    } else {
-      Serial.println("Fin de l'envoi/");
-      digitalWrite(LED_GREEN_PIN, LOW);
-      digitalWrite(LED_RED_PIN, HIGH);
-  
-      // Affichage arrêt
-      lcd.clear();
-      lcd.setCursor(0, 0);
-      lcd.print(">> STOP Data <<");
-      lcd.setCursor(0, 1);
-      lcd.print(" Wait press BTN ");
+      digitalWrite(LED_GREEN_PIN, HIGH);
     }
   }
-  previousButtonState = currentButtonState;
-  
 
-  // Conversion pression → kg
-  if (last_capteur_value >= 11) {
-    poidsKg = 0.4028 * last_capteur_value + 17.57;
-  } else {
-    poidsKg = 0;
-  }
-
-// LED RGB dynamique (si envoi actif)
-if (envoiActif) {
-  // Gestion LED RGB
+  // État LED & bandeau RGB selon pression
   if (last_capteur_value <= 819) {
     ledcWrite(redChannel, 0); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
     for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(0, 0, 255));
@@ -186,28 +139,10 @@ if (envoiActif) {
 
   strip.show();
 
-  // Affichage LCD
+  // Affichage LCD ligne 1 (température, humidité)
   lcd.setCursor(0, 0);
   lcd.print("T:"); lcd.print(temperature, 1);
   lcd.print("C H:"); lcd.print(humidity, 1); lcd.print("%");
-  lcd.setCursor(0, 1);
-  lcd.print(poidsKg, 1);  
-  lcd.print("Kg "); 
-  lcd.print(last_capteur_value);
-  lcd.print("ADC"); 
 
-
-  // Envoi série
-  Serial.print(temperature); 
-  Serial.print(";");
-  Serial.print(humidity); 
-  Serial.print(";");
-  Serial.print(poidsKg); 
-  Serial.println(";");
-
-  delay(200);  // Ce delay reste seulement ici
-} else {
-  // Effet visuel stylé pendant l’attente
-  rainbowCycle(5);  // Effet fluide et continu
-}
+  delay(200); // Délai demandé
 }
