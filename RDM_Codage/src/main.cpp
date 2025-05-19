@@ -3,7 +3,6 @@
 #include <Wire.h>     // pour l'oled hd44780
 #include <hd44780.h>  // pour l'oled hd44780
 #include <hd44780ioClass/hd44780_I2Cexp.h> // pour l'oled hd44780
-//#include <AiEsp32RotaryEncoder.h> // pour l'encodeur rotatif, teste de simulation
 #include <DHT.h> // pour le dht22
 #include <Adafruit_NeoPixel.h>
 
@@ -46,6 +45,8 @@ int previousButtonState = HIGH; // bouton non appuyé initialement
 int flag_confirm = 0; // flag pour activer le traitement après confirmation depuis LabVIEW
 bool affichageMesures = false;
 unsigned long confirmationTime = 0;
+bool envoiAuto = false;
+
 
 void setup() {
   Serial.begin(115200);
@@ -88,10 +89,17 @@ void loop() {
   float temperature = dht.readTemperature();
   float humidity = dht.readHumidity();
   last_capteur_value = analogRead(PRESSURE_PIN);
+  lcd.setCursor(0, 1);
+  lcd.print("                "); // Efface ligne 1 (16 caractères)
+  lcd.setCursor(0,1);
+  lcd.print("ADC:");
+  lcd.print(last_capteur_value);
 
-  // Vérifie le capteur DHT22
+  // Système d'erreur
   if (isnan(temperature) || isnan(humidity)) {
-    Serial.println("Erreur de lecture du DHT22/");
+    lcd.clear();
+    lcd.setCursor(0,0);
+    lcd.print("Erreur DHT22");
     delay(500);
     return;
   }
@@ -103,6 +111,7 @@ void loop() {
 
     // Si le message contient une virgule
     if (message.indexOf(',') != -1) {
+      envoiAuto = false; // STOP l'envoi automatique
       Serial.print(temperature);
       Serial.print(";");
       Serial.print(humidity);
@@ -119,30 +128,53 @@ void loop() {
   // État LED & bandeau RGB selon pression
   if (last_capteur_value <= 819) {
     ledcWrite(redChannel, 0); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
-    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(0, 0, 255));
+    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(0, 255, 0));//Bleu Vert Rouge
   } else if (last_capteur_value <= 1638) {
     ledcWrite(redChannel, 127); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
-    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(127, 0, 255));
+    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(0, 255, 127));
   } else if (last_capteur_value <= 2457) {
     ledcWrite(redChannel, 255); ledcWrite(greenChannel, 255); ledcWrite(blueChannel, 0);
-    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(255, 0, 255));
+    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(0, 255, 255));
   } else if (last_capteur_value <= 3276) {
     ledcWrite(redChannel, 255); ledcWrite(greenChannel, 128); ledcWrite(blueChannel, 0);
-    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(255, 0, 128));
+    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(0, 128, 255));
   } else if (last_capteur_value <= 3956) {
     ledcWrite(redChannel, 255); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 0);
     for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(255, 0, 0));
   } else {
     ledcWrite(redChannel, 120); ledcWrite(greenChannel, 0); ledcWrite(blueChannel, 255);
-    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(200, 255, 0));
+    for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(200, 0, 255));
   }
 
   strip.show();
 
   // Affichage LCD ligne 1 (température, humidité)
   lcd.setCursor(0, 0);
-  lcd.print("T:"); lcd.print(temperature, 1);
-  lcd.print("C H:"); lcd.print(humidity, 1); lcd.print("%");
+  lcd.print("T:"); 
+  lcd.print(temperature, 1);
+  lcd.print("C H:"); 
+  lcd.print(humidity, 1); 
+  lcd.print("%");
 
+  int currentButtonState = digitalRead(BUTTON_PIN);
+  if (previousButtonState == HIGH && currentButtonState == LOW) {
+    // Début envoi automatique
+    envoiAuto = true;
+    digitalWrite(LED_RED_PIN, HIGH);
+    digitalWrite(LED_GREEN_PIN, LOW);
+     
+  }
+  previousButtonState = currentButtonState;
+
+    // Envoi automatique si activé
+  if (envoiAuto) {
+    Serial.print(temperature);
+    Serial.print(";");
+    Serial.print(humidity);
+    Serial.print(";");
+  }
+  //test de bande rgb
+  //for (int i = 0; i < NUM_PIXELS; i++) strip.setPixelColor(i, strip.Color(200, 0, 0));
+  //strip.show();
   delay(200); // Délai demandé
 }
